@@ -1,139 +1,190 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import RangeSlider from "@/components/RangeSlider/RangeSlider";
 import { DraggableCard } from "@/components/cards/DraggableCard";
 import { DraggableCardBody } from "@/components/ui/draggable-card";
+import CardData from "@/components/interfaces/cardData";
+import { v4 as uuidv4 } from "uuid";
 
 interface Stroke {
-  x: number;
-  y: number;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
   color: string;
   size: number;
   mode: "draw" | "erase";
 }
 
 export default function Home() {
-  const [brushValue, setBrushValue] = useState(5);
-  const [color, setColor] = useState("");
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [mode, setMode] = useState<"draw" | "erase">("draw");
+  const cardRefs = useRef<{ [id: string]: HTMLDivElement | null }>({});
+  const [isDraggingCard, setIsDraggingCard] = useState<boolean>(false);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
-  const [isDraggingCard, setIsDraggingCard] = useState(false);
-  const isDrawingRef = useRef(false);
+  const [cards, setCards] = useState<CardData[]>([]);
+  const [color, setColor] = useState("#000000");
+  const [brushSize, setBrushSize] = useState(5);
+  const [mode, setMode] = useState<"draw" | "erase">("draw");
+
+  const scaleRef = useRef(1); // zoom level
+  const offsetXRef = useRef(0); // pan x
+  const offsetYRef = useRef(0); // pan y
+
+  const prevMouseRef = useRef<{ x: number; y: number } | null>(null);
+
+  // Add a card
+  const addCard = (type: "text" | "image" | "video", content: string) => {
+    const id = uuidv4();
+    setCards((prev) => [...prev, { id, x: 100, y: 100, type, content }]);
+  };
+
+  // Convert between screen and true coordinates
+  const toScreenX = (x: number) => (x + offsetXRef.current) * scaleRef.current;
+  const toScreenY = (y: number) => (y + offsetYRef.current) * scaleRef.current;
+  const toTrueX = (x: number) => x / scaleRef.current - offsetXRef.current;
+  const toTrueY = (y: number) => y / scaleRef.current - offsetYRef.current;
+
+  // Render the canvas
+  const renderCanvas = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    strokes.forEach((stroke) => {
+      ctx.beginPath();
+      ctx.moveTo(toScreenX(stroke.x0), toScreenY(stroke.y0));
+      ctx.lineTo(toScreenX(stroke.x1), toScreenY(stroke.y1));
+      ctx.lineWidth = stroke.size;
+
+      if (stroke.mode === "draw") {
+        ctx.globalCompositeOperation = "source-over"; // normal drawing
+        ctx.strokeStyle = stroke.color;
+      } else {
+        ctx.globalCompositeOperation = "destination-out"; // erases instead of drawing
+        ctx.strokeStyle = "rgba(0,0,0,1)";
+      }
+
+      ctx.stroke();
+    });
+    ctx.globalCompositeOperation = "source-over"; // reset after drawing
+  };
+
+  // Mouse events
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    canvas.width = canvas.offsetWidth;
-    canvas.height = canvas.offsetHeight;
-
-    isDrawingRef.current = false;
-
-    const resizeCanvas = () => {
-      if (!canvas || !ctx) return;
-      const tempCanvas = document.createElement("canvas");
-      tempCanvas.width = canvas.width;
-      tempCanvas.height = canvas.height;
-      const tempCtx = tempCanvas.getContext("2d");
-      if (!tempCtx) return;
-      tempCtx.drawImage(canvas, 0, 0);
-      canvas.width = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
-      ctx.drawImage(tempCanvas, 0, 0);
+    const handleMouseDown = (e: MouseEvent) => {
+      if (e.button === 0) {
+        prevMouseRef.current = { x: e.pageX, y: e.pageY };
+      }
     };
 
-    const getCoords = (e: MouseEvent) => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!prevMouseRef.current) return;
+
+      const prev = prevMouseRef.current;
+      const x = toTrueX(e.pageX);
+      const y = toTrueY(e.pageY);
+      const prevX = toTrueX(prev.x);
+      const prevY = toTrueY(prev.y);
+
+      if (e.buttons === 1) {
+        // Draw stroke
+        const newStroke: Stroke = {
+          x0: prevX,
+          y0: prevY,
+          x1: x,
+          y1: y,
+          color,
+          size: brushSize,
+          mode,
+        };
+        setStrokes((prev) => [...prev, newStroke]);
+      }
+
+      prevMouseRef.current = { x: e.pageX, y: e.pageY };
+      renderCanvas();
+    };
+
+    const handleMouseUp = () => {
+      prevMouseRef.current = null;
+    };
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+
+      console.log("ass");
+
+      const delta = -e.deltaY / 500;
+      const newScale = Math.min(Math.max(scaleRef.current + delta, 0.5), 3);
+
+      // Zoom around cursor
       const rect = canvas.getBoundingClientRect();
-      return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      const cursorX = e.clientX - rect.left;
+      const cursorY = e.clientY - rect.top;
+
+      offsetXRef.current -= cursorX / scaleRef.current - cursorX / newScale;
+      offsetYRef.current -= cursorY / scaleRef.current - cursorY / newScale;
+
+      scaleRef.current = newScale;
+
+      // Apply transform to cards
+      cards.forEach((card) => {
+        const el = cardRefs.current[card.id];
+        if (!el) return;
+        el.style.transform = `translate(${offsetXRef.current}px, ${offsetYRef.current}px) scale(${scaleRef.current})`;
+      });
+      renderCanvas();
     };
 
-    const startDrawing = (e: MouseEvent) => {
-      if (isDraggingCard) return;
-      isDrawingRef.current = true;
-      drawStroke(e);
-    };
+    canvas.addEventListener("mousedown", handleMouseDown);
+    canvas.addEventListener("mousemove", handleMouseMove);
+    canvas.addEventListener("mouseup", handleMouseUp);
+    canvas.addEventListener("mouseleave", handleMouseUp);
+    canvas.addEventListener("wheel", handleWheel, { passive: false });
+    window.addEventListener("resize", renderCanvas);
 
-    const stopDrawing = () => {
-      isDrawingRef.current = false;
-      ctx.beginPath();
-    };
+    renderCanvas();
 
-    const drawStroke = (e: MouseEvent) => {
-      if (!isDrawingRef.current) return;
-      const { x, y } = getCoords(e);
-      const newStroke: Stroke = {
-        x,
-        y,
-        color,
-        size: brushValue,
-        mode: mode || "draw",
-      };
-      draw(newStroke);
-      setStrokes((prev) => [...prev, newStroke]);
-    };
-
-    const draw = (stroke: Stroke) => {
-      if (!ctx) return;
-      ctx.beginPath();
-      ctx.globalCompositeOperation =
-        stroke.mode === "erase" ? "destination-out" : "source-over";
-      ctx.fillStyle = stroke.mode === "erase" ? "rgba(0,0,0,1)" : stroke.color;
-      ctx.arc(stroke.x, stroke.y, stroke.size, 0, Math.PI * 2);
-      ctx.fill();
-    };
-
-    strokes.forEach((s) => {
-      draw(s);
-    });
-    window.addEventListener("resize", resizeCanvas);
-    canvas.addEventListener("mousedown", startDrawing);
-    canvas.addEventListener("mouseup", stopDrawing);
-    canvas.addEventListener("mouseleave", stopDrawing);
-    canvas.addEventListener("mousemove", drawStroke);
-    canvas.addEventListener("contextmenu", (e) => e.preventDefault());
     return () => {
-      window.removeEventListener("resize", resizeCanvas);
-      canvas.removeEventListener("mousedown", startDrawing);
-      canvas.removeEventListener("mouseup", stopDrawing);
-      canvas.removeEventListener("mouseleave", stopDrawing);
-      canvas.removeEventListener("mousemove", drawStroke);
-      canvas.removeEventListener("contextmenu", (e) => e.preventDefault());
+      canvas.removeEventListener("mousedown", handleMouseDown);
+      canvas.removeEventListener("mousemove", handleMouseMove);
+      canvas.removeEventListener("mouseup", handleMouseUp);
+      canvas.removeEventListener("mouseleave", handleMouseUp);
+      canvas.removeEventListener("wheel", handleWheel);
+      window.removeEventListener("resize", renderCanvas);
     };
-  }, [color, brushValue, mode]);
+  }, [brushSize, color, mode, cards, strokes]);
+
   const clearCanvas = () => {
+    setStrokes([]);
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas?.getContext("2d");
-    setStrokes([]);
+    const ctx = canvas.getContext("2d");
     ctx?.clearRect(0, 0, canvas.width, canvas.height);
   };
 
-  //   const saveCanvas = () => {
-  //   const canvas = canvasRef.current;
-  //   if (!canvas) return;
-
-  //   const link = document.createElement('a');
-  //   link.download = 'drawing.png';
-  //   link.href = canvas.toDataURL();
-  //   link.click();
-  // };
-
   return (
-    <div className="relative w-screen h-screen overflow-auto">
+    <div className="relative w-screen min-h-screen overflow-hidden">
+      <div className="absolute inset-0 bg-[radial-gradient(circle,rgba(0,0,0,0.1)_1px,transparent_1px)] bg-[size:16px_16px]" />
+
       <canvas
         ref={canvasRef}
-        className="absolute top-0 left-0 w-full h-full"
+        className="relative w-full h-full overflow-hidden"
         style={{
           cursor: mode === "erase" ? "cell" : "crosshair",
-          pointerEvents: isDraggingCard ? "none" : "auto", // ✅ disable drawing while dragging
         }}
       />
 
       <div
-        className={`flex flex-row items-center w-[500px] m-5 p-5 space-x-5 absolute top-0 left-0 bg-white rounded-md z-30 `}
+        className={`absolute top-2 left-1/2 -translate-x-1/2 flex items-center gap-4 px-6 py-3 
+    bg-white/90 backdrop-blur-md shadow-md border rounded-2xl z-30`}
       >
         <input
           type="color"
@@ -149,10 +200,9 @@ export default function Home() {
         <RangeSlider
           min="0"
           max="21"
-          value={brushValue}
+          value={brushSize}
           onChange={(e: any) => {
-            setBrushValue(+e.target.value);
-            console.log(brushValue);
+            setBrushSize(+e.target.value);
           }}
         />
         <div className="m-2 flex flex-row p-1">
@@ -212,7 +262,17 @@ export default function Home() {
           </button>
         </div>
       </div>
-      <div className="flex m-8 gap-4 absolute top-[88%] z-10">
+
+      <div
+        className="absolute top-4 right-4  flex items-center gap-4 px-5 py-3 
+    bg-white/90 backdrop-blur-md shadow-md border rounded-full z-30 hover:bg-black/5 hover:transform hover:scale-110 transition-all duration-300 ease-out"
+        onClick={() => {
+          addCard("text", "Hello world!");
+        }}
+      >
+        +
+      </div>
+      <div className="flex m-8 gap-4 absolute bottom-10 z-30">
         <button
           id="clearBtn"
           className="w-[100px] h-12 px-8 py-2 text-sm font-medium text-[#ededed]-600 rounded-full bg-white hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition duration-300 ease-in-out"
@@ -229,194 +289,38 @@ export default function Home() {
           Save
         </button>
       </div>
-      <div
-        className="absolute -z-10 inset-0 h-full w-full 
-        bg-[radial-gradient(circle,#73737350_1px,transparent_1px)] 
-        bg-[size:10px_10px]"
-      />
-      <DraggableCard className="absolute z-10 translate-x-[650px] translate-y-[200px]">
-        <DraggableCardBody
-          onDragStart={() => setIsDraggingCard(true)}
-          onDragEnd={() => setIsDraggingCard(false)}
-          onMouseEnter={() => setIsDraggingCard(true)}
-          onMouseLeave={() => setIsDraggingCard(false)}
-        >
-          <div className="flex flex-col space-y-4">
-            <input
-              type="color"
-              value={color}
-              onChange={(e) => setColor(e.target.value)}
-            />
-            <input
-              type="range"
-              min={1}
-              max={50}
-              value={brushValue}
-              onChange={(e) => setBrushValue(Number(e.target.value))}
-            />
-            <button onClick={() => setMode(mode === "draw" ? "erase" : "draw")}>
-              {mode === "draw" ? "Erase" : "Draw"}
-            </button>
-            <button>Save</button>
-          </div>
-        </DraggableCardBody>
 
-                <DraggableCardBody
-          onDragStart={() => setIsDraggingCard(true)}
-          onDragEnd={() => setIsDraggingCard(false)}
-          onMouseEnter={() => setIsDraggingCard(true)}
-          onMouseLeave={() => setIsDraggingCard(false)}
-        >
-          <div className="flex flex-col space-y-4">
-            <input
-              type="color"
-              value={color}
-              onChange={(e) => setColor(e.target.value)}
-            />
-            <input
-              type="range"
-              min={1}
-              max={50}
-              value={brushValue}
-              onChange={(e) => setBrushValue(Number(e.target.value))}
-            />
-            <button onClick={() => setMode(mode === "draw" ? "erase" : "draw")}>
-              {mode === "draw" ? "Erase" : "Draw"}
-            </button>
-            <button>Save</button>
-          </div>
-        </DraggableCardBody>
-
-                <DraggableCardBody
-          onDragStart={() => setIsDraggingCard(true)}
-          onDragEnd={() => setIsDraggingCard(false)}
-          onMouseEnter={() => setIsDraggingCard(true)}
-          onMouseLeave={() => setIsDraggingCard(false)}
-        >
-          <div className="flex flex-col space-y-4">
-            <input
-              type="color"
-              value={color}
-              onChange={(e) => setColor(e.target.value)}
-            />
-            <input
-              type="range"
-              min={1}
-              max={50}
-              value={brushValue}
-              onChange={(e) => setBrushValue(Number(e.target.value))}
-            />
-            <button onClick={() => setMode(mode === "draw" ? "erase" : "draw")}>
-              {mode === "draw" ? "Erase" : "Draw"}
-            </button>
-            <button>Save</button>
-          </div>
-        </DraggableCardBody>
-
-                <DraggableCardBody
-          onDragStart={() => setIsDraggingCard(true)}
-          onDragEnd={() => setIsDraggingCard(false)}
-          onMouseEnter={() => setIsDraggingCard(true)}
-          onMouseLeave={() => setIsDraggingCard(false)}
-        >
-          <div className="flex flex-col space-y-4">
-            <input
-              type="color"
-              value={color}
-              onChange={(e) => setColor(e.target.value)}
-            />
-            <input
-              type="range"
-              min={1}
-              max={50}
-              value={brushValue}
-              onChange={(e) => setBrushValue(Number(e.target.value))}
-            />
-            <button onClick={() => setMode(mode === "draw" ? "erase" : "draw")}>
-              {mode === "draw" ? "Erase" : "Draw"}
-            </button>
-            <button>Save</button>
-          </div>
-        </DraggableCardBody>
-
-                <DraggableCardBody
-          onDragStart={() => setIsDraggingCard(true)}
-          onDragEnd={() => setIsDraggingCard(false)}
-          onMouseEnter={() => setIsDraggingCard(true)}
-          onMouseLeave={() => setIsDraggingCard(false)}
-        >
-          <div className="flex flex-col space-y-4">
-            <input
-              type="color"
-              value={color}
-              onChange={(e) => setColor(e.target.value)}
-            />
-            <input
-              type="range"
-              min={1}
-              max={50}
-              value={brushValue}
-              onChange={(e) => setBrushValue(Number(e.target.value))}
-            />
-            <button onClick={() => setMode(mode === "draw" ? "erase" : "draw")}>
-              {mode === "draw" ? "Erase" : "Draw"}
-            </button>
-            <button>Save</button>
-          </div>
-        </DraggableCardBody>
-
-                <DraggableCardBody
-          onDragStart={() => setIsDraggingCard(true)}
-          onDragEnd={() => setIsDraggingCard(false)}
-          onMouseEnter={() => setIsDraggingCard(true)}
-          onMouseLeave={() => setIsDraggingCard(false)}
-        >
-          <div className="flex flex-col space-y-4">
-            <input
-              type="color"
-              value={color}
-              onChange={(e) => setColor(e.target.value)}
-            />
-            <input
-              type="range"
-              min={1}
-              max={50}
-              value={brushValue}
-              onChange={(e) => setBrushValue(Number(e.target.value))}
-            />
-            <button onClick={() => setMode(mode === "draw" ? "erase" : "draw")}>
-              {mode === "draw" ? "Erase" : "Draw"}
-            </button>
-            <button>Save</button>
-          </div>
-        </DraggableCardBody>
-
-                <DraggableCardBody
-          onDragStart={() => setIsDraggingCard(true)}
-          onDragEnd={() => setIsDraggingCard(false)}
-          onMouseEnter={() => setIsDraggingCard(true)}
-          onMouseLeave={() => setIsDraggingCard(false)}
-        >
-          <div className="flex flex-col space-y-4">
-            <input
-              type="color"
-              value={color}
-              onChange={(e) => setColor(e.target.value)}
-            />
-            <input
-              type="range"
-              min={1}
-              max={50}
-              value={brushValue}
-              onChange={(e) => setBrushValue(Number(e.target.value))}
-            />
-            <button onClick={() => setMode(mode === "draw" ? "erase" : "draw")}>
-              {mode === "draw" ? "Erase" : "Draw"}
-            </button>
-            <button>Save</button>
-          </div>
-        </DraggableCardBody>
-      </DraggableCard>
+      <div className="absolute top-0 left-0 w-full h-auto p-20">
+        <DraggableCard className="relative w-full h-full transform scale-100">
+          {cards.map((card) => (
+            <DraggableCardBody
+              key={card.id}
+              className="absolute top-[200px] left-[650px]"
+              style={{ top: card.y, left: card.x }}
+              onDragStart={() => setIsDraggingCard(true)}
+              onDragEnd={() => setIsDraggingCard(false)}
+              ref={(el: HTMLDivElement | null) => {
+                cardRefs.current[card.id] = el; // ✅ assign only, return nothing
+              }}
+            >
+              {card.type === "text" && <p>{card.content}</p>}
+              {card.type === "image" && (
+                <img
+                  src={card.content}
+                  alt="card content"
+                  className="w-64 h-64 object-cover"
+                />
+              )}
+              {card.type === "video" && (
+                <video controls className="w-64 h-64">
+                  <source src={card.content} type="video/mp4" />
+                  Your browser does not support the video tag.
+                </video>
+              )}
+            </DraggableCardBody>
+          ))}
+        </DraggableCard>
+      </div>
     </div>
   );
 }
