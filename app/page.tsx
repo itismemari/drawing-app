@@ -1,10 +1,10 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
 import RangeSlider from "@/components/RangeSlider/RangeSlider";
-import { DraggableCard } from "@/components/cards/DraggableCard";
-import { DraggableCardBody } from "@/components/ui/draggable-card";
 import CardData from "@/components/interfaces/cardData";
 import { v4 as uuidv4 } from "uuid";
+import { div } from "framer-motion/client";
+import FileDropzone from "@/components/FileDropping/fileDroppingZone";
 
 interface Stroke {
   x0: number;
@@ -16,14 +16,24 @@ interface Stroke {
   mode: "draw" | "erase";
 }
 
+interface cardPosition {
+  id: string;
+  x: number;
+  y: number;
+}
+
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const cardRefs = useRef<{ [id: string]: HTMLDivElement | null }>({});
-  const [isDraggingCard, setIsDraggingCard] = useState<boolean>(false);
+  const [cardPosition, setCardPosition] = useState<cardPosition[]>([]);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [cards, setCards] = useState<CardData[]>([]);
   const [color, setColor] = useState("#000000");
   const [brushSize, setBrushSize] = useState(5);
+  const [showTypeSelection, setShowTypeSelection] = useState<boolean | null>(
+    false
+  );
+  const [selectedType, setSelectedType] = useState<string | null>(null);
   const [mode, setMode] = useState<"draw" | "erase">("draw");
 
   const scaleRef = useRef(1); // zoom level
@@ -32,10 +42,46 @@ export default function Home() {
 
   const prevMouseRef = useRef<{ x: number; y: number } | null>(null);
 
-  // Add a card
+  const dragCard = (id: string, e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startY = e.clientY;
+
+    const card = cardRefs.current[id];
+    if (!card) return;
+
+    // get initial card position
+    const initialPos = cardPosition.find((c) => c.id === id) || {
+      x: 100,
+      y: 100,
+      id,
+    };
+
+    const handleMouseMove = (eMove: MouseEvent) => {
+      const dx = (eMove.clientX - startX) / scaleRef.current;
+      const dy = (eMove.clientY - startY) / scaleRef.current;
+
+      setCardPosition((prev) =>
+        prev.map((c) =>
+          c.id === id ? { ...c, x: initialPos.x + dx, y: initialPos.y + dy } : c
+        )
+      );
+    };
+
+    const handleMouseUp = () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+  };
+
+
   const addCard = (type: "text" | "image" | "video", content: string) => {
     const id = uuidv4();
     setCards((prev) => [...prev, { id, x: 100, y: 100, type, content }]);
+    setCardPosition((prev) => [...prev, { id, x: 100, y: 100 }]);
   };
 
   // Convert between screen and true coordinates
@@ -119,27 +165,39 @@ export default function Home() {
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
 
-      console.log("ass");
-
       const delta = -e.deltaY / 500;
       const newScale = Math.min(Math.max(scaleRef.current + delta, 0.5), 3);
 
       // Zoom around cursor
-      const rect = canvas.getBoundingClientRect();
+      const rect = canvasRef.current!.getBoundingClientRect();
       const cursorX = e.clientX - rect.left;
       const cursorY = e.clientY - rect.top;
 
-      offsetXRef.current -= cursorX / scaleRef.current - cursorX / newScale;
-      offsetYRef.current -= cursorY / scaleRef.current - cursorY / newScale;
+      // Calculate the true coordinates under cursor
+      const trueCursorX = cursorX / scaleRef.current - offsetXRef.current;
+      const trueCursorY = cursorY / scaleRef.current - offsetYRef.current;
 
+      // Update scale
       scaleRef.current = newScale;
 
-      // Apply transform to cards
+      // Adjust offsets so the point under cursor stays fixed
+      offsetXRef.current = cursorX / scaleRef.current - trueCursorX;
+      offsetYRef.current = cursorY / scaleRef.current - trueCursorY;
+
+      // Update all card positions to match canvas transform
       cards.forEach((card) => {
         const el = cardRefs.current[card.id];
-        if (!el) return;
-        el.style.transform = `translate(${offsetXRef.current}px, ${offsetYRef.current}px) scale(${scaleRef.current})`;
+        const pos = cardPosition.find((c) => c.id === card.id);
+        if (!el || !pos) return;
+
+        el.style.left = `${toScreenX(pos.x)}px`;
+        el.style.top = `${toScreenY(pos.y)}px`;
+        el.style.transform = `scale(${
+          scaleRef.current < 1.2 ? scaleRef.current : 1
+        })`;
       });
+
+      // Render canvas
       renderCanvas();
     };
 
@@ -164,19 +222,106 @@ export default function Home() {
 
   const clearCanvas = () => {
     setStrokes([]);
+    setCards([]);
+    setCardPosition([]);
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     ctx?.clearRect(0, 0, canvas.width, canvas.height);
   };
 
+  const renderInput = (type: string) => {
+    switch (type) {
+      case "text":
+        return (
+          <div
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 
+          bg-white shadow-xl rounded-2xl p-4 w-80 flex flex-col gap-4 z-30"
+          >
+            <div
+              className="absolute top-[-15px] right-0 bg-black text-white shadow-xl rounded-full py-1 px-3 cursor-pointer"
+              onClick={() => {
+                setSelectedType(null);
+              }}
+            >
+              X
+            </div>
+            <textarea
+              className="border rounded-lg p-2"
+              placeholder="Enter text..."
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  addCard("text", (e.target as HTMLTextAreaElement).value);
+                  setSelectedType(null);
+                  setShowTypeSelection(false);
+                }
+              }}
+            />
+            <button
+              className="bg-black text-white px-4 py-2 rounded-lg"
+              onClick={() => {
+                const input = document.querySelector(
+                  "textarea"
+                ) as HTMLTextAreaElement;
+                if (input?.value) {
+                  addCard("text", input.value);
+                  setSelectedType(null);
+                  setShowTypeSelection(false);
+                }
+              }}
+            >
+              Add
+            </button>
+          </div>
+        );
+
+      case "image":
+        return (
+          <FileDropzone setSelectedType ={setSelectedType} />
+        );
+
+      case "video":
+        return (
+          <div
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 
+          bg-white shadow-xl rounded-2xl p-4 w-80 flex flex-col gap-4 z-30"
+          >
+            <div
+              className="absolute top-[-15px] right-0 bg-black text-white shadow-xl rounded-full py-1 px-3 cursor-pointer"
+              onClick={() => {
+                setSelectedType(null);
+              }}
+            >
+              X
+            </div>
+            <input
+              type="text"
+              placeholder="Paste video URL"
+              className="border rounded-lg p-2"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  addCard("video", (e.target as HTMLInputElement).value);
+                  setSelectedType(null);
+                  setShowTypeSelection(false);
+                }
+              }}
+            />
+          </div>
+        );
+
+      default:
+        return null;
+    }
+  };
+
   return (
-    <div className="relative w-screen min-h-screen overflow-hidden">
+    <div className="relative w-screen min-h-screen">
       <div className="absolute inset-0 bg-[radial-gradient(circle,rgba(0,0,0,0.1)_1px,transparent_1px)] bg-[size:16px_16px]" />
 
       <canvas
         ref={canvasRef}
-        className="relative w-full h-full overflow-hidden"
+        className="relative w-full h-full overflow-hidden z-10"
         style={{
           cursor: mode === "erase" ? "cell" : "crosshair",
         }}
@@ -267,7 +412,7 @@ export default function Home() {
         className="absolute top-4 right-4  flex items-center gap-4 px-5 py-3 
     bg-white/90 backdrop-blur-md shadow-md border rounded-full z-30 hover:bg-black/5 hover:transform hover:scale-110 transition-all duration-300 ease-out"
         onClick={() => {
-          addCard("text", "Hello world!");
+          setShowTypeSelection(!showTypeSelection);
         }}
       >
         +
@@ -290,36 +435,87 @@ export default function Home() {
         </button>
       </div>
 
-      <div className="absolute top-0 left-0 w-full h-auto p-20">
-        <DraggableCard className="relative w-full h-full transform scale-100">
-          {cards.map((card) => (
-            <DraggableCardBody
-              key={card.id}
-              className="absolute top-[200px] left-[650px]"
-              style={{ top: card.y, left: card.x }}
-              onDragStart={() => setIsDraggingCard(true)}
-              onDragEnd={() => setIsDraggingCard(false)}
-              ref={(el: HTMLDivElement | null) => {
-                cardRefs.current[card.id] = el; // ✅ assign only, return nothing
+      <div className="absolute top-0 left-0 w-full h-full">
+        {showTypeSelection && selectedType === null && (
+          <div
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 
+                bg-white shadow-xl rounded-2xl p-4 w-60 
+                flex flex-col gap-10 z-20 border border-gray-200"
+          >
+            <div
+              className="absolute top-0 right-0 bg-black text-white shadow-xl rounded-full py-1 px-3 cursor-pointer"
+              onClick={() => {
+                setShowTypeSelection(false);
               }}
             >
-              {card.type === "text" && <p>{card.content}</p>}
-              {card.type === "image" && (
-                <img
-                  src={card.content}
-                  alt="card content"
-                  className="w-64 h-64 object-cover"
-                />
-              )}
-              {card.type === "video" && (
-                <video controls className="w-64 h-64">
-                  <source src={card.content} type="video/mp4" />
-                  Your browser does not support the video tag.
-                </video>
-              )}
-            </DraggableCardBody>
-          ))}
-        </DraggableCard>
+              X
+            </div>
+            <ul className="flex flex-col gap-2">
+              <li>
+                <button
+                  className="w-full px-3 py-2 rounded-lg text-sm font-medium 
+                         text-gray-700 hover:bg-gray-100 hover:text-gray-900 
+                         transition-colors"
+                  onClick={() => {
+                    setSelectedType("text");
+                  }}
+                >
+                  ✏️ Text
+                </button>
+              </li>
+              <li>
+                <button
+                  className="w-full px-3 py-2 rounded-lg text-sm font-medium 
+                         text-gray-700 hover:bg-gray-100 hover:text-gray-900 
+                         transition-colors"
+                  onClick={() => {
+                    setSelectedType("image");
+                  }}
+                >
+                  🖼️ Image
+                </button>
+              </li>
+              <li>
+                <button
+                  className="w-full px-3 py-2 rounded-lg text-sm font-medium 
+                         text-gray-700 hover:bg-gray-100 hover:text-gray-900 
+                         transition-colors"
+                  onClick={() => {
+                    setSelectedType("video");
+                  }}
+                >
+                  🎥 Video
+                </button>
+              </li>
+            </ul>
+          </div>
+        )}
+
+        {selectedType !== null && renderInput(selectedType)}
+
+        {cards.map((card) => {
+          const pos = cardPosition.find((c) => c.id === card.id) || {
+            x: 100,
+            y: 100,
+            id: card.id,
+          };
+          return (
+            <div
+              key={card.id}
+              ref={(el) => {
+                cardRefs.current[card.id] = el;
+              }}
+              onMouseDown={(e) => dragCard(card.id, e)}
+              className="absolute p-4 bg-white shadow rounded cursor-grab z-20"
+              style={{
+                left: toScreenX(pos.x),
+                top: toScreenY(pos.y),
+              }}
+            >
+              {card.content}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
