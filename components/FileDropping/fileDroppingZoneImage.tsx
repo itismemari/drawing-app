@@ -1,7 +1,9 @@
 "use client";
 import React, { useRef, useState } from "react";
-export default function FileDropzone({ ...props }) {
+import Image from "next/image";
+export default function FileDropzoneImage({ ...props }) {
   const imageref = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [storedImage, setStoredImage] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
 
@@ -30,11 +32,28 @@ export default function FileDropzone({ ...props }) {
   const handleCancel = () => {
     setStoredImage(null);
     setPreview(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const handleConfirm = () => {
+  const handleConfirm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!storedImage) return;
+
+    const formData = new FormData();
+    formData.append("storedImage", storedImage);
+
+    const res = await fetch("/api/uploadImage", {
+      method: "POST",
+      body: formData,
+    });
+
+    const data = await res.json();
+    const link = data.url;
+
+    props.addCard("image" , link);
+    props.setSelectedType(null); // optionally close modal after confirm
     
-  }
+  };
 
   return (
     <div
@@ -61,6 +80,7 @@ export default function FileDropzone({ ...props }) {
         ref={imageref}
       >
         <input
+          ref={fileInputRef}
           type="file"
           className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-50"
           onChange={(e) => {
@@ -88,18 +108,26 @@ export default function FileDropzone({ ...props }) {
 
         {/* Preview */}
         {preview && (
-          <img
+          <Image
             src={preview}
             alt="Preview"
+            width={200}
+            height={200}
             className="mt-4 mx-auto max-h-48 rounded-lg"
           />
         )}
       </div>
       <div className="flex flex-row justify-center items-center gap-20">
-        <button className="bg-black text-white p-3 px-5 shadow-md rounded-md cursor-pointer hover:scale-110 transition duration-400 ease">
+        <button
+          className="bg-black text-white p-3 px-5 shadow-md rounded-md cursor-pointer hover:scale-110 transition duration-400 ease"
+          onClick={handleConfirm}
+        >
           Confirm
         </button>
-        <button className="bg-white text-black p-3 px-5 border shadow-md rounded-md cursor-pointer hover:scale-110 transition duration-400 ease" onClick={handleCancel}>
+        <button
+          className="bg-white text-black p-3 px-5 border shadow-md rounded-md cursor-pointer hover:scale-110 transition duration-400 ease"
+          onClick={handleCancel}
+        >
           Cancle
         </button>
       </div>

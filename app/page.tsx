@@ -4,7 +4,8 @@ import RangeSlider from "@/components/RangeSlider/RangeSlider";
 import CardData from "@/components/interfaces/cardData";
 import { v4 as uuidv4 } from "uuid";
 import { div } from "framer-motion/client";
-import FileDropzone from "@/components/FileDropping/fileDroppingZone";
+import FileDropzoneImage from "@/components/FileDropping/fileDroppingZoneImage";
+import FileDropzoneVideo from "@/components/FileDropping/FileDropzoneVideo";
 
 interface Stroke {
   x0: number;
@@ -76,7 +77,6 @@ export default function Home() {
     window.addEventListener("mousemove", handleMouseMove);
     window.addEventListener("mouseup", handleMouseUp);
   };
-
 
   const addCard = (type: "text" | "image" | "video", content: string) => {
     const id = uuidv4();
@@ -278,36 +278,18 @@ export default function Home() {
 
       case "image":
         return (
-          <FileDropzone setSelectedType ={setSelectedType} />
+          <FileDropzoneImage
+            setSelectedType={setSelectedType}
+            addCard={addCard}
+          />
         );
 
       case "video":
         return (
-          <div
-            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 
-          bg-white shadow-xl rounded-2xl p-4 w-80 flex flex-col gap-4 z-30"
-          >
-            <div
-              className="absolute top-[-15px] right-0 bg-black text-white shadow-xl rounded-full py-1 px-3 cursor-pointer"
-              onClick={() => {
-                setSelectedType(null);
-              }}
-            >
-              X
-            </div>
-            <input
-              type="text"
-              placeholder="Paste video URL"
-              className="border rounded-lg p-2"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  addCard("video", (e.target as HTMLInputElement).value);
-                  setSelectedType(null);
-                  setShowTypeSelection(false);
-                }
-              }}
-            />
-          </div>
+          <FileDropzoneVideo
+            setSelectedType={setSelectedType}
+            addCard={addCard}
+          />
         );
 
       default:
@@ -440,7 +422,7 @@ export default function Home() {
           <div
             className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 
                 bg-white shadow-xl rounded-2xl p-4 w-60 
-                flex flex-col gap-10 z-20 border border-gray-200"
+                flex flex-col gap-10 z-20 border border-gray-200 z-30"
           >
             <div
               className="absolute top-0 right-0 bg-black text-white shadow-xl rounded-full py-1 px-3 cursor-pointer"
@@ -499,6 +481,7 @@ export default function Home() {
             y: 100,
             id: card.id,
           };
+
           return (
             <div
               key={card.id}
@@ -506,13 +489,42 @@ export default function Home() {
                 cardRefs.current[card.id] = el;
               }}
               onMouseDown={(e) => dragCard(card.id, e)}
-              className="absolute p-4 bg-white shadow rounded cursor-grab z-20"
+              className="absolute p-2 bg-white shadow rounded cursor-grab z-20 max-w-[320px]"
               style={{
                 left: toScreenX(pos.x),
                 top: toScreenY(pos.y),
               }}
             >
-              {card.content}
+              {/* Card Content Renderer */}
+              {card.type === "text" && (
+                <p className="text-gray-800 whitespace-pre-wrap break-words">
+                  {card.content}
+                </p>
+              )}
+
+              {card.type === "image" && typeof card.content === "string" && (
+                <div className="w-full h-48 flex items-center justify-center overflow-hidden rounded">
+                  <img
+                    src={card.content}
+                    alt="Card"
+                    className="object-contain w-full h-full"
+                  />
+                </div>
+              )}
+
+              {card.type === "video" && typeof card.content === "string" && (
+                <div className="w-full h-48 overflow-hidden rounded">
+                  <video
+                    src={card.content}
+                    className="w-full h-full object-cover"
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                    controls={false}
+                  />
+                </div>
+              )}
             </div>
           );
         })}
