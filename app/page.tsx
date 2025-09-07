@@ -1,11 +1,12 @@
 "use client";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import RangeSlider from "@/components/RangeSlider/RangeSlider";
 import CardData from "@/components/interfaces/cardData";
 import { v4 as uuidv4 } from "uuid";
 import html2canvas from "html2canvas-pro";
 import FileDropzoneImage from "@/components/FileDropping/fileDroppingZoneImage";
 import FileDropzoneVideo from "@/components/FileDropping/FileDropzoneVideo";
+import { Resizable } from "re-resizable";
 
 interface Stroke {
   x0: number;
@@ -92,7 +93,7 @@ export default function Home() {
   const toTrueY = (y: number) => y / scaleRef.current - offsetYRef.current;
 
   // Render the canvas
-  const renderCanvas = () => {
+  const renderCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
@@ -107,19 +108,14 @@ export default function Home() {
       ctx.moveTo(toScreenX(stroke.x0), toScreenY(stroke.y0));
       ctx.lineTo(toScreenX(stroke.x1), toScreenY(stroke.y1));
       ctx.lineWidth = stroke.size;
-
-      if (stroke.mode === "draw") {
-        ctx.globalCompositeOperation = "source-over"; // normal drawing
-        ctx.strokeStyle = stroke.color;
-      } else {
-        ctx.globalCompositeOperation = "destination-out"; // erases instead of drawing
-        ctx.strokeStyle = "rgba(0,0,0,1)";
-      }
-
+      ctx.strokeStyle = stroke.mode === "draw" ? stroke.color : "rgba(0,0,0,1)";
+      ctx.globalCompositeOperation =
+        stroke.mode === "draw" ? "source-over" : "destination-out";
       ctx.stroke();
     });
-    ctx.globalCompositeOperation = "source-over"; // reset after drawing
-  };
+
+    ctx.globalCompositeOperation = "source-over";
+  }, [strokes]); // only recreate if `strokes` changes
 
   // Mouse events
   useEffect(() => {
@@ -197,7 +193,6 @@ export default function Home() {
           scaleRef.current < 1.2 ? scaleRef.current : 1
         })`;
       });
-
       // Render canvas
       renderCanvas();
     };
@@ -314,6 +309,19 @@ export default function Home() {
         return null;
     }
   };
+
+  function showDeleteOption(id: string) {
+    return (e: React.MouseEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      const confirmDelete = window.confirm(
+        "Are you sure you want to delete this card?"
+      );
+      if (confirmDelete) {
+        setCards((prev) => prev.filter((card) => card.id !== id));
+        setCardPosition((prev) => prev.filter((pos) => pos.id !== id));
+      }
+    };
+  }
 
   return (
     <div id="canvas" className="relative w-screen min-h-screen">
@@ -517,42 +525,95 @@ export default function Home() {
                 cardRefs.current[card.id] = el;
               }}
               onMouseDown={(e) => dragCard(card.id, e)}
-              className="absolute p-2 bg-white shadow rounded cursor-grab z-20 max-w-[320px]"
+              className="absolute p-2 cursor-grab z-20 max-w-[320px]"
               style={{
                 left: toScreenX(pos.x),
                 top: toScreenY(pos.y),
               }}
+              onContextMenu={showDeleteOption(card.id)}
             >
-              {/* Card Content Renderer */}
-              {card.type === "text" && (
-                <p className="text-gray-800 whitespace-pre-wrap break-words">
-                  {card.content}
-                </p>
-              )}
+              <Resizable
+                className="rounded-lg shadow overflow-hidden border bg-transparent"
+                minWidth={300}
+                onResize={(e, direction, ref, d) => {
+                  const el = cardRefs.current[card.id];
+                  if (el) {
+                    const textElements = el.querySelector("p");
+                    if (textElements) {
+                      (
+                        textElements as HTMLElement
+                      ).style.fontSize = `${Math.max(
+                        12,
+                        Math.min(24, ref.offsetWidth / 15)
+                      )}px`;
+                    }
+                  }
+                }}
+                onResizeStop={(e, direction, ref, d) => {
+                  setCardPosition((prev) =>
+                    prev.map((c) =>
+                      c.id === card.id
+                        ? {
+                            ...c,
+                            x: direction.includes("left") ? c.x - d.width : c.x,
+                            y: direction.includes("top") ? c.y - d.height : c.y,
+                          }
+                        : c
+                    )
+                  );
+                }}
+                handleStyles={{
+                  right: { background: "black", width: "6px" },
+                  bottom: { background: "black", height: "6px" },
+                  bottomRight: {
+                    background: "black",
+                    width: "12px",
+                    height: "12px",
+                  },
+                }}
+              >
+                {/* Card Content Renderer */}
+                {card.type === "text" && (
+                  <div className="w-full h-full bg-white shadow rounded-lg p-4 overflow-auto flex items-center justify-center">
+                    <p
+                      className="text-gray-800 whitespace-pre-wrap break-words leading-relaxed text-center w-full h-full"
+                      style={{
+                        fontSize: cardRefs.current[card.id]
+                          ? Math.max(
+                              12,
+                              Math.min(
+                                24,
+                                cardRefs.current[card.id]!.offsetWidth / 15 // scale font by container width
+                              )
+                            )
+                          : 16, // fallback
+                      }}
+                    >
+                      {card.content}
+                    </p>
+                  </div>
+                )}
 
-              {card.type === "image" && typeof card.content === "string" && (
-                <div className="w-full h-48 flex items-center justify-center overflow-hidden rounded">
+                {card.type === "image" && typeof card.content === "string" && (
                   <img
                     src={card.content}
                     alt="Card"
-                    className="object-contain w-full h-full"
+                    className="object-contain w-full h-full rounded-lg"
                   />
-                </div>
-              )}
+                )}
 
-              {card.type === "video" && typeof card.content === "string" && (
-                <div className="w-full h-48 overflow-hidden rounded">
+                {card.type === "video" && typeof card.content === "string" && (
                   <video
                     src={card.content}
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-contain rounded-lg"
                     autoPlay
                     loop
                     muted
                     playsInline
                     controls={false}
                   />
-                </div>
-              )}
+                )}
+              </Resizable>
             </div>
           );
         })}
